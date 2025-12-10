@@ -1,0 +1,409 @@
+
+
+
+const WebSocket = require('ws');
+const http = require('http');
+const Constants = require('./constants');
+const Game = require('./game');
+const Player = require('./player');
+const { PacketBuilder } = require('./packet');
+
+class SlitherServer {
+    constructor(port = 8080) {
+        this.port = port;
+        this.game = new Game();
+        this.players = new Map(); 
+        
+       
+        this.snakePositions = new Map(); 
+        
+       
+        this.game.players = this.players;
+        
+       
+        this.setupGameBroadcasts();
+        
+       
+        this.httpServer = http.createServer((req, res) => {
+            if (req.url === '/slither' || req.url === '/') {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end('Slither.io Server Running - Protocol v11');
+            } else {
+                res.writeHead(404);
+                res.end();
+            }
+        });
+        
+       
+        this.wss = new WebSocket.Server({ 
+            server: this.httpServer,
+            path: '/slither'
+        });
+        
+        this.setupWebSocket();
+        
+       
+        this.startGameLoop();
+    }
+    
+    setupWebSocket() {
+        this.wss.on('connection', (ws, req) => {
+            const ip = req.socket.remoteAddress;
+            console.log(`New connection from ${ip}`);
+            
+            const player = new Player(ws, this.game);
+            this.players.set(ws, player);
+            
+            ws.on('message', (data) => {
+                try {
+                    const buffer = Buffer.from(data);
+                    player.handleMessage(buffer);
+                } catch (e) {
+                    console.error('Message handling error:', e);
+                }
+            });
+            
+            ws.on('close', () => {
+                console.log(`Connection closed: ${ip}`);
+                if (player.snake) {
+                    this.snakePositions.delete(player.snake.id);
+                }
+                player.disconnect();
+                this.players.delete(ws);
+            });
+            
+            ws.on('error', (err) => {
+                console.error('WebSocket error:', err.message);
+                if (player.snake) {
+                    this.snakePositions.delete(player.snake.id);
+                }
+                player.disconnect();
+                this.players.delete(ws);
+            });
+        });
+        
+        this.wss.on('error', (err) => {
+            console.error('Server error:', err);
+        });
+    }
+    
+    setupGameBroadcasts() {
+       
+        this.game.broadcastFoodSpawn = (food, type) => {
+            this.broadcastInRange(food.x, food.y, 3000, (player) => {
+                player.sendFoodSpawn(food, type);
+            });
+        };
+        
+        this.game.broadcastFoodEaten = (x, y, eaterId) => {
+            this.broadcastInRange(x, y, 3000, (player) => {
+                player.sendFoodEaten(x, y, eaterId);
+            });
+        };
+        
+        this.game.broadcastPreyEaten = (preyId, eaterId) => {
+            this.broadcastAll((player) => {
+                player.sendPreyEaten(preyId, eaterId);
+            });
+        };
+        
+        this.game.broadcastSnakeDeath = (snakeId) => {
+            this.snakePositions.delete(snakeId);
+            
+            this.broadcastAll((player) => {
+                if (player.visibleSnakes.has(snakeId)) {
+                    player.sendSnakeRemove(snakeId, true);
+                }
+                if (player.snake && player.snake.id === snakeId) {
+                    player.sendDeath(0);
+                }
+            });
+        };
+        
+        this.game.broadcastLeaderboard = () => {
+            this.broadcastAll((player) => {
+                player.sendLeaderboard();
+            });
+        };
+        
+        this.game.broadcastMinimap = () => {
+            this.broadcastAll((player) => {
+                player.sendMinimap();
+            });
+        };
+        
+        this.game.sendKillNotification = (targetPlayer, kills) => {
+            if (targetPlayer && targetPlayer.snake) {
+                const builder = new PacketBuilder();
+                builder.writeUInt16(0);
+                builder.writeUInt8(Constants.PACKET.KILL);
+                builder.writeUInt16(targetPlayer.snake.id);
+                builder.writeUInt24(kills);
+                targetPlayer.send(builder.build());
+            }
+        };
+    }
+    
+    broadcastAll(callback) {
+        for (const player of this.players.values()) {
+            if (player.snake) {
+                try {
+                    callback(player);
+                } catch (e) {
+                    console.error('Broadcast error:', e);
+                }
+            }
+        }
+    }
+    
+    broadcastInRange(x, y, range, callback) {
+        const rangeSq = range * range;
+        for (const player of this.players.values()) {
+            if (player.snake) {
+                const dx = player.snake.x - x;
+                const dy = player.snake.y - y;
+                if (dx * dx + dy * dy <= rangeSq) {
+                    try {
+                        callback(player);
+                    } catch (e) {
+                        console.error('Broadcast error:', e);
+                    }
+                }
+            }
+        }
+    }
+    
+    startGameLoop() {
+       
+        setInterval(() => {
+            this.game.tick();
+            
+           
+            for (const player of this.players.values()) {
+                player.update();
+            }
+        }, Constants.TICK_RATE);
+        
+       
+        setInterval(() => {
+            this.processSnakeMovements();
+        }, 47); 
+        
+       
+        setInterval(() => {
+            this.updateSnakeAngles();
+        }, 16);
+        
+        console.log(`Game loop started (${Constants.TICK_RATE}ms ticks)`);
+    }
+    
+    processSnakeMovements() {
+        const now = Date.now();
+        
+        for (const snake of this.game.snakes.values()) {
+            const moveInterval = snake.boosting ? Constants.BOOST_MOVE_INTERVAL : Constants.NORMAL_MOVE_INTERVAL;
+            
+            if (!snake.lastMoveTime) snake.lastMoveTime = now;
+            
+            if (now - snake.lastMoveTime >= moveInterval) {
+               
+                const prevX = snake.x;
+                const prevY = snake.y;
+                const prevFam = snake.fam;
+                
+               
+                const shouldGrow = snake.hasPendingGrowth();
+                
+               
+               
+                if (shouldGrow && snake.parts.length > 0) {
+                    const tail = snake.parts[snake.parts.length - 1];
+                    const prev = snake.parts.length > 1 ? snake.parts[snake.parts.length - 2] : { x: snake.x, y: snake.y };
+                    const ang = Math.atan2(tail.y - prev.y, tail.x - prev.x);
+                    snake.parts.push({
+                        x: tail.x + Math.cos(ang) * Constants.MOVE_DISTANCE,
+                        y: tail.y + Math.sin(ang) * Constants.MOVE_DISTANCE,
+                        dying: false,
+                        sp: 0
+                    });
+                }
+                
+               
+                snake.move(); 
+                snake.lastMoveTime = now;
+                
+               
+               
+                if (snake.droppedFood) {
+                    const { Food } = require('./food');
+                    const worldSize = Constants.GAME_RADIUS * 2;
+                    const x = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.x));
+                    const y = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.y));
+                    
+                   
+                    const sc = snake.getScale();
+                    const baseSize = 24 + Math.floor(sc * 2); 
+                    const sizeVariation = Math.floor(Math.random() * 2); 
+                    const foodSize = baseSize + sizeVariation;
+                    
+                    const food = new Food(
+                        x,
+                        y,
+                        Math.floor(Math.random() * 9),
+                        foodSize
+                    );
+                    this.game.foods.set(food.id, food);
+                    this.game.broadcastFoodSpawn(food, 'b');
+                }
+                
+               
+                for (const player of this.players.values()) {
+                    if (!player.snake) continue;
+                    
+                   
+                    if (player.visibleSnakes.has(snake.id) || player.snake.id === snake.id) {
+                        
+                        if (shouldGrow) {
+                           
+                           
+                            player.sendSnakeIncrease(snake, prevX, prevY);
+                        } else {
+                           
+                            player.sendSnakeMove(snake, prevX, prevY);
+                            
+                           
+                            if (Math.abs(snake.fam - prevFam) > 0.001) {
+                                player.sendFamUpdate(snake);
+                            }
+                        }
+                    }
+                }
+                
+               
+                if (shouldGrow) {
+                    snake.consumeOnePendingGrowth();
+                }
+                
+               
+                this.snakePositions.set(snake.id, {
+                    x: snake.x,
+                    y: snake.y,
+                    sct: snake.sct
+                });
+            }
+        }
+    }
+    
+    updateSnakeAngles() {
+        const now = Date.now();
+        
+       
+        const playerSnakeIds = new Set();
+        for (const player of this.players.values()) {
+            if (player.snake) {
+                playerSnakeIds.add(player.snake.id);
+            }
+        }
+        
+        for (const snake of this.game.snakes.values()) {
+           
+            if (!snake.lastAngleUpdateTime) {
+                snake.lastAngleUpdateTime = now;
+            }
+            
+            const deltaTime = now - snake.lastAngleUpdateTime;
+            snake.lastAngleUpdateTime = now;
+            
+           
+            const isPlayerControlled = playerSnakeIds.has(snake.id);
+            
+           
+            snake.update(deltaTime, isPlayerControlled);
+            
+           
+            if (!snake.lastRotationTime) {
+                snake.lastRotationTime = now;
+                snake.lastSentAngle = snake.angle;
+            }
+            
+            const timeSinceLastRotation = now - snake.lastRotationTime;
+            const angleDiff = Math.abs(snake.angle - (snake.lastSentAngle || 0));
+            
+           
+            if (timeSinceLastRotation >= 100 || angleDiff > 0.05) {
+                snake.lastRotationTime = now;
+                snake.lastSentAngle = snake.angle;
+                
+               
+                for (const player of this.players.values()) {
+                    if (!player.snake) continue;
+                    
+                    const isVisible = player.visibleSnakes.has(snake.id) || 
+                                     player.snake.id === snake.id;
+                    
+                    if (isVisible) {
+                        player.sendSnakeRotation(snake);
+                    }
+                }
+            }
+        }
+    }
+    
+    start() {
+        this.httpServer.listen(this.port, '0.0.0.0', () => {
+            console.log(`
+╔═══════════════════════════════════════════════════════════╗
+║           Slither.io Server - Protocol v11                ║
+╠═══════════════════════════════════════════════════════════╣
+║  Server running on port ${String(this.port).padEnd(5)}                          ║
+║  WebSocket path: /slither                                 ║
+║                                                           ║
+║  World size: ${Constants.GAME_RADIUS * 2} x ${Constants.GAME_RADIUS * 2}                         ║
+║  Play area radius: ${Constants.PLAY_RADIUS}                            ║
+║  Sector size: ${Constants.SECTOR_SIZE}                                   ║
+║  Max snake parts: ${Constants.MAX_SNAKE_PARTS}                               ║
+║                                                           ║
+║  Initial food: ${String(this.game.foods.size).padEnd(4)}                               ║
+║  Initial prey: ${String(this.game.preys.size).padEnd(2)}                                 ║
+║                                                           ║
+║  Bot settings:                                            ║
+║    Min players: ${Constants.MIN_PLAYERS}                                    ║
+║    Max bots: ${Constants.MAX_BOTS}                                       ║
+╚═══════════════════════════════════════════════════════════╝
+
+Connect with: ws://localhost:${this.port}/slither
+            `);
+        });
+    }
+    
+    stop() {
+       
+        for (const [ws, player] of this.players) {
+            player.disconnect();
+        }
+        this.players.clear();
+        
+        this.wss.close();
+        this.httpServer.close();
+        console.log('Server stopped');
+    }
+}
+
+
+const PORT = parseInt(process.env.PORT) || 8080;
+const server = new SlitherServer(PORT);
+server.start();
+
+
+process.on('SIGINT', () => {
+    console.log('\nShutting down...');
+    server.stop();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    server.stop();
+    process.exit(0);
+});
+
+module.exports = SlitherServer;
