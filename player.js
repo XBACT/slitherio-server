@@ -129,10 +129,12 @@ class Player {
                 break;
                 
             default:
-               
+                // Angle update: client sends a byte 0-250 representing target angle
                 if (firstByte <= 250 && this.snake) {
-                    const newAngle = (firstByte / 251) * Math.PI * 2;
-                    this.snake.wantedAngle = newAngle;
+                    // Use setWantedAngle to properly update both wang (24-bit units) 
+                    // and wantedAngle (radians) - this is required for snake.update() 
+                    // to process the turning correctly
+                    this.snake.setWantedAngle(firstByte, true);
                 }
                 break;
         }
@@ -434,14 +436,15 @@ class Player {
     sendSnakeMove(snake, prevX, prevY) {
         const isOwnSnake = this.snake && snake.id === this.snake.id;
         
-       
         const newX = Math.floor(snake.x) & 0xFFFF;
         const newY = Math.floor(snake.y) & 0xFFFF;
         
-       
-       
+        // Protocol v11: Always use 'g' (103) with absolute coordinates
+        // Own snake: dlen=4 (xx 2 bytes + yy 2 bytes, no ID)
+        // Other snake: dlen=6 (id 2 bytes + xx 2 bytes + yy 2 bytes)
+        const cmd = 0x67; // 'g'
         const dataSize = isOwnSnake ? 4 : 6;
-        const { buf, offset: startOffset } = this.createRawPacket(0x67, dataSize); 
+        const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize); 
         
         let offset = startOffset;
         
@@ -450,7 +453,6 @@ class Player {
             offset += 2;
         }
         
-       
         buf.writeUInt16BE(newX, offset);
         offset += 2;
         buf.writeUInt16BE(newY, offset);
@@ -462,15 +464,16 @@ class Player {
     sendSnakeIncrease(snake, prevX, prevY) {
         const isOwnSnake = this.snake && snake.id === this.snake.id;
         
-       
         const newX = Math.floor(snake.x) & 0xFFFF;
         const newY = Math.floor(snake.y) & 0xFFFF;
         const famValue = Math.floor(snake.fam * 16777215) & 0xFFFFFF;
         
-       
-       
+        // Protocol v11: Always use 'n' (110) with absolute coordinates
+        // Own snake: dlen=7 (xx 2 bytes + yy 2 bytes + fam 3 bytes, no ID)
+        // Other snake: dlen=9 (id 2 bytes + xx 2 bytes + yy 2 bytes + fam 3 bytes)
+        const cmd = 0x6E; // 'n'
         const dataSize = isOwnSnake ? 7 : 9;
-        const { buf, offset: startOffset } = this.createRawPacket(0x6E, dataSize); 
+        const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize); 
         
         let offset = startOffset;
         
@@ -479,13 +482,11 @@ class Player {
             offset += 2;
         }
         
-       
         buf.writeUInt16BE(newX, offset);
         offset += 2;
         buf.writeUInt16BE(newY, offset);
         offset += 2;
         
-       
         buf[offset++] = (famValue >> 16) & 0xFF;
         buf[offset++] = (famValue >> 8) & 0xFF;
         buf[offset++] = famValue & 0xFF;
@@ -495,45 +496,44 @@ class Player {
     
    
     sendSnakeRotation(snake) {
-        const isOwnSnake = this.snake && snake.id === this.snake.id;
-        
-        const wang256 = Math.floor((snake.wantedAngle / (2 * Math.PI)) * 256) & 0xFF;
-        
-       
-        let angleDiff = snake.wantedAngle - snake.angle;
-        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-        
-        if (isOwnSnake) {
-           
-           
-            const cmd = angleDiff >= 0 ? 0x45 : 0x34; 
-            const dataSize = 3; 
-            const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize);
-            let offset = startOffset;
-            buf.writeUInt16BE(snake.id, offset);
-            offset += 2;
-            buf[offset++] = wang256;
-            this.send(buf.slice(0, offset));
-        } else {
-           
-            const ang256 = Math.floor((snake.angle / (2 * Math.PI)) * 256) & 0xFF;
-            const baseSpeed = snake.getBaseSpeed();
-            const speed18 = Math.floor(baseSpeed * 18) & 0xFF;
-            
-           
-            const cmd = angleDiff >= 0 ? 0x65 : 0x34;
-            
-            const dataSize = 5; 
-            const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize);
-            let offset = startOffset;
-            buf.writeUInt16BE(snake.id, offset);
-            offset += 2;
-            buf[offset++] = ang256;
-            buf[offset++] = wang256;
-            buf[offset++] = speed18;
-            this.send(buf.slice(0, offset));
-        }
+        if (!snake) return;
+
+        // Encode angles as 1 byte (0-255) matching client expectation: byte * 2π / 256.
+        const toAngByte = (rad) => {
+            const twoPi = Math.PI * 2;
+            let v = Math.floor((rad % twoPi + twoPi) % twoPi * 256 / twoPi) & 0xFF;
+            return v;
+        };
+
+        // Compute shortest signed difference in (-π, π]
+        const twoPi = Math.PI * 2;
+        let diff = (snake.wantedAngle - snake.angle) % twoPi;
+        if (diff < -Math.PI) diff += twoPi;
+        else if (diff > Math.PI) diff -= twoPi;
+
+        const ang256 = toAngByte(snake.angle);
+        const wang256 = toAngByte(snake.wantedAngle);
+
+        // Client decodes speed as byte/18.
+        const sp = (typeof snake.getCurrentSpeed === 'function') ? snake.getCurrentSpeed() : (snake.speed ?? snake.getBaseSpeed?.() ?? (Constants.NSP1 / 100));
+        let speed18 = Math.round(sp * 18);
+        if (speed18 < 0) speed18 = 0;
+        if (speed18 > 255) speed18 = 255;
+
+        // Protocol v11: ALWAYS include snake ID (protocol_version < 14 always reads ID)
+        // Use 'e' (101) for CCW (dir=1), '4' (52) for CW (dir=2)
+        // Format: [cmd][id_hi][id_lo][ang][wang][speed] = 6 bytes total (plen=6)
+        const cmd = (diff < 0) ? 0x65 /* 'e' */ : 0x34 /* '4' */;
+        const { buf, offset: startOffset } = this.createRawPacket(cmd, 5);
+        let offset = startOffset;
+
+        buf.writeUInt16BE(snake.id, offset);
+        offset += 2;
+        buf[offset++] = ang256;
+        buf[offset++] = wang256;
+        buf[offset++] = speed18;
+
+        this.send(buf);
     }
     
     sendSnakeShrink(snake) {
