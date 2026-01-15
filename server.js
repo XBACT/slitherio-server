@@ -1,6 +1,3 @@
-
-
-
 const WebSocket = require('ws');
 const http = require('http');
 const Constants = require('./constants');
@@ -184,38 +181,60 @@ class SlitherServer {
             }
         }, Constants.TICK_RATE);
         
-       
+        // Unified snake update loop - process both angles and movements together
+        // This ensures consistent timing between angle updates and position updates
         setInterval(() => {
-            this.processSnakeMovements();
-        }, 47); 
-        
-       
-        setInterval(() => {
-            this.updateSnakeAngles();
-        }, 16);
+            this.processSnakeUpdates();
+        }, 8); // 8ms for smooth updates (125 Hz)
         
         console.log(`Game loop started (${Constants.TICK_RATE}ms ticks)`);
     }
     
-    processSnakeMovements() {
+    processSnakeUpdates() {
         const now = Date.now();
         
+        // Process both angle updates and movements in one unified loop
         for (const snake of this.game.snakes.values()) {
-            const moveInterval = snake.boosting ? Constants.BOOST_MOVE_INTERVAL : Constants.NORMAL_MOVE_INTERVAL;
+            // Initialize timing values
+            if (!snake.lastUpdateTime) {
+                snake.lastUpdateTime = now;
+            }
+            if (!snake.lastMoveTime) {
+                snake.lastMoveTime = now;
+            }
+            if (!snake.lastRotationSent) {
+                snake.lastRotationSent = now;
+                snake.lastSentAngle = snake.angle;
+            }
             
-            if (!snake.lastMoveTime) snake.lastMoveTime = now;
+            const deltaTime = now - snake.lastUpdateTime;
+            snake.lastUpdateTime = now;
             
-            if (now - snake.lastMoveTime >= moveInterval) {
-               
+            // Update snake angle (turning physics)
+            snake.update(deltaTime);
+            
+            // Calculate move interval based on current speed
+            // Client formula: csp = sp * vfr / 4, where vfr = deltaTime / 8
+            // So in 1 second: sp * (1000/8) / 4 = sp * 31.25 units
+            // Time to move MOVE_DISTANCE: MOVE_DISTANCE / (sp * 31.25) * 1000 = MOVE_DISTANCE * 32 / sp
+            const sp = snake.getCurrentSpeed();
+            let moveInterval = (Constants.MOVE_DISTANCE * 32) / Math.max(0.001, sp);
+            moveInterval = Math.max(30, Math.min(500, moveInterval));
+            
+            // Check if it's time to send a new move packet
+            const timeSinceMove = now - snake.lastMoveTime;
+            
+            if (timeSinceMove >= moveInterval) {
                 const prevX = snake.x;
                 const prevY = snake.y;
                 const prevFam = snake.fam;
-                
-               
                 const shouldGrow = snake.hasPendingGrowth();
                 
-               
-               
+                // Move the snake FIRST (shifts body parts)
+                snake.move();
+                snake.lastMoveTime = now;
+                
+                // THEN add tail part if growing (after shift, so it doesn't get overwritten)
                 if (shouldGrow && snake.parts.length > 0) {
                     const tail = snake.parts[snake.parts.length - 1];
                     const prev = snake.parts.length > 1 ? snake.parts[snake.parts.length - 2] : { x: snake.x, y: snake.y };
@@ -228,50 +247,33 @@ class SlitherServer {
                     });
                 }
                 
-               
-                snake.move(); 
-                snake.lastMoveTime = now;
-                
-               
-               
+                // Handle boost food dropping
                 if (snake.droppedFood) {
                     const { Food } = require('./food');
                     const worldSize = Constants.GAME_RADIUS * 2;
                     const x = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.x));
                     const y = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.y));
                     
-                   
                     const sc = snake.getScale();
-                    const baseSize = 24 + Math.floor(sc * 2); 
-                    const sizeVariation = Math.floor(Math.random() * 2); 
+                    const baseSize = 24 + Math.floor(sc * 2);
+                    const sizeVariation = Math.floor(Math.random() * 2);
                     const foodSize = baseSize + sizeVariation;
                     
-                    const food = new Food(
-                        x,
-                        y,
-                        Math.floor(Math.random() * 9),
-                        foodSize
-                    );
+                    const food = new Food(x, y, Math.floor(Math.random() * 9), foodSize);
                     this.game.foods.set(food.id, food);
                     this.game.broadcastFoodSpawn(food, 'b');
                 }
                 
-               
+                // Send movement packets to all relevant players
                 for (const player of this.players.values()) {
                     if (!player.snake) continue;
                     
-                   
                     if (player.visibleSnakes.has(snake.id) || player.snake.id === snake.id) {
-                        
                         if (shouldGrow) {
-                           
-                           
                             player.sendSnakeIncrease(snake, prevX, prevY);
                         } else {
-                           
                             player.sendSnakeMove(snake, prevX, prevY);
                             
-                           
                             if (Math.abs(snake.fam - prevFam) > 0.001) {
                                 player.sendFamUpdate(snake);
                             }
@@ -279,62 +281,29 @@ class SlitherServer {
                     }
                 }
                 
-               
                 if (shouldGrow) {
                     snake.consumeOnePendingGrowth();
                 }
                 
-               
                 this.snakePositions.set(snake.id, {
                     x: snake.x,
                     y: snake.y,
                     sct: snake.sct
                 });
             }
-        }
-    }
-    
-    updateSnakeAngles() {
-        const now = Date.now();
-        
-       
-        const playerSnakeIds = new Set();
-        for (const player of this.players.values()) {
-            if (player.snake) {
-                playerSnakeIds.add(player.snake.id);
-            }
-        }
-        
-        for (const snake of this.game.snakes.values()) {
-           
-            if (!snake.lastAngleUpdateTime) {
-                snake.lastAngleUpdateTime = now;
-            }
             
-            const deltaTime = now - snake.lastAngleUpdateTime;
-            snake.lastAngleUpdateTime = now;
-            
-           
-            const isPlayerControlled = playerSnakeIds.has(snake.id);
-            
-           
-            snake.update(deltaTime, isPlayerControlled);
-            
-           
-            if (!snake.lastRotationTime) {
-                snake.lastRotationTime = now;
-                snake.lastSentAngle = snake.angle;
-            }
-            
-            const timeSinceLastRotation = now - snake.lastRotationTime;
+            // Send rotation packets when angle changes significantly
+            // But not too frequently - only when there's meaningful change
+            const timeSinceRotation = now - snake.lastRotationSent;
             const angleDiff = Math.abs(snake.angle - (snake.lastSentAngle || 0));
             
-           
-            if (timeSinceLastRotation >= 100 || angleDiff > 0.05) {
-                snake.lastRotationTime = now;
+            // Send rotation update if:
+            // - Significant angle change (> 0.02 radians ≈ 1 degree)
+            // - Or periodic update every 150ms to keep client in sync
+            if (angleDiff > 0.02 || (timeSinceRotation >= 150 && angleDiff > 0.001)) {
+                snake.lastRotationSent = now;
                 snake.lastSentAngle = snake.angle;
                 
-               
                 for (const player of this.players.values()) {
                     if (!player.snake) continue;
                     
