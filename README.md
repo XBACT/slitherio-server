@@ -42,7 +42,3 @@ window.bso = { ip: "127.0.0.1", po: 8080 }; window.forcing = true; window.want_p
 ## Contributing
 
 Contributions are very welcome! Feel free to help fix the issues above or add new features.
-
-## License
-
-ISC
