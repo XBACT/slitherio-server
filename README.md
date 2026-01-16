@@ -1,44 +1,44 @@
-## He continued
-Jesse's staff, voice
-
-# I understand
+# Slither.io Server
 
 
-1. Close the account
-She smiled at him
-Product details: https://gshub.com/kbact/slite-
-""
+## Installation
 
-2. Go to the bank
-She smiled at him
-Supports CD format
-""
-3.3 Reasonable control
-She smiled at him
-medicine
-""
-4. Start the installation
-She smiled at him
-Example:
-""
 
-# Nid Oes is considered an essential fatty acid
+1. Clone repo
+```bash
+git clone https://github.com/xbact/slitherio-server.git
+```
 
-F12 → *** Enter Snite.io in the installation menu.
+2. Enter folder
+```bash
+cd slither-server
+```
+3. Install dependencies
+```bash
+npm install
+```
+4. Start server
+```bash
+npm start
+```
 
-Jay-Z said
-Windows.boo = {IP: "127.0.0.0.0.1, Route: 8080}; Windows.pour = yes; Windows.evs_pli = true;
-""
+## How To Connect
 
-# I want to work
+Open Slither.io → press F12 → go to **Console** tab → paste this:
 
-- [] is correct
-- [] Ideal for playing music.
-[] status unknown
-[] Good leadership
-- [] Thanks for your efforts.
-- read[]"
+```js
+window.bso = { ip: "127.0.0.1", po: 8080 }; window.forcing = true; window.want_play = true;
+```
 
-# There are many people
+## TODO
 
-We hope this information will be useful in the design and development of new products.
+- [ ] Fix collision detection misalignment
+- [ ] Fix rotation issues
+- [ ] Fix boost problems
+- [ ] Fix bot movement
+- [ ] Fix prey behavior
+- [ ] Fix food spawning
+
+## Contributing
+
+Contributions are very welcome! Feel free to help fix the issues above or add new features.
