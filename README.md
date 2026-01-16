@@ -1,44 +1,44 @@
-##slither.io server
-The Node.js server implements the Slither.io protocol.
+##father
+People use ade.js slate.base.
 
-# collecting
+# i know
 
 
 1. Close your account
-yes
-git clone https://github.com/xbact/slither-server.git
-```
+very good
+Add: https://gshub.com/kbact/slite-
+""
 
-2. Go to the folder
-yes
-Internal CD server
-```
-3. Install the dependencies
-yes
-installation of e.g
-```
-4. Start the server
-yes
-run for example
-```
+2. Go to the bank
+very good
+Answer to support CD
+""
+3. Other families
+very good
+What do you like?
+""
+4. Start the installation.
+very good
+Example:
+""
 
-# how to join
+# Attendance o o o o o Burgess
 
-Open Slither.io → Press F12 → Go to **Console** tab → Enter:
+Download Snite.io Land F12 *** Next ** Go to recovery page.
 
-`` J.S.
-window.bso = {IP: "127.0.0.1", PO: 8080}; WindowPower = true; window.want_play = true;
-```
+J.S
+windows.bo = {ip: "127.0.0.0.0.1, command: 8080}; windows.play = yes; windows.event_play = true;
+""
 
 # work
 
-- [ ] Adjusted form for collision detection
-- [ ] Fix rotation problem
-- [ ] Fixed placement issues.
-- [] Change the behavior of the robot
-- [ ] improved recording behavior
-- [ ] Organization of food production
+- [] Confidential information is protected.
+- [] Nice music.
+- Internal closure broken [].
+【】General storage.
+- [] Thanks for the good work.
+[] Kitchen
 
-# add more in the future
+# there are many people
 
-Contributions are welcome! Help us improve the above or add new features.
+Let's begin. Update or add new services.
