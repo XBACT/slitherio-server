@@ -1,17 +1,3 @@
-/*
- * Copyright (C) 2026 xbact
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * LICENSE file for more details.
- */
-
 class PacketBuilder {
     constructor(initialSize = 64) {
         this.buffer = Buffer.alloc(initialSize);
@@ -52,6 +38,13 @@ class PacketBuilder {
         this.buffer.writeUInt8((value >> 16) & 0xFF, this.offset);
         this.buffer.writeUInt16BE(value & 0xFFFF, this.offset + 1);
         this.offset += 3;
+        return this;
+    }
+    
+    writeUInt32(value) {
+        this.ensureCapacity(4);
+        this.buffer.writeUInt32BE(value >>> 0, this.offset);
+        this.offset += 4;
         return this;
     }
     

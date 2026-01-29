@@ -1,21 +1,6 @@
-/*
- * Copyright (C) 2026 xbact
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * LICENSE file for more details.
- */
-
 const Constants = require('./constants');
-
+const Config = require('./config');
 let nextFoodId = 1;
-
 class Food {
     constructor(x, y, color, size, id = null) {
         this.x = x;
@@ -34,7 +19,6 @@ class Food {
         return Math.max(1, Math.ceil(base * 5));
     }
 }
-
 class Prey {
     constructor(id, x, y, color, size) {
         this.id = id;
@@ -65,7 +49,7 @@ class Prey {
         }
         
        
-        const angularSpeed = Constants.MANU2 / 1000;
+        const angularSpeed = Config.MANU2 / 1000;
         if (this.direction === 1) {
             this.angle -= angularSpeed * deltaTime;
         } else if (this.direction === 2) {
@@ -82,7 +66,7 @@ class Prey {
         
        
         const margin = 500;
-        const worldSize = Constants.GAME_RADIUS * 2;
+        const worldSize = Config.GAME_RADIUS * 2;
         if (this.x < margin || this.x > worldSize - margin) {
             this.angle = Math.PI - this.angle;
             this.x = Math.max(margin, Math.min(worldSize - margin, this.x));
@@ -104,7 +88,6 @@ class Prey {
     }
 }
 
-
 class FoodSpawner {
     constructor(gameRadius, playRadius) {
         this.gameRadius = gameRadius;
@@ -125,16 +108,15 @@ class FoodSpawner {
         }
         return { x, y };
     }
-
     spawnNaturalFood() {
         const angle = Math.random() * Math.PI * 2;
         const r = Math.sqrt(Math.random()) * this.playRadius * 0.9;
         const x = this.gameRadius + Math.cos(angle) * r;
         const y = this.gameRadius + Math.sin(angle) * r;
         
-        const color = Math.floor(Math.random() * Constants.FOOD_COLORS);
-        const size = Constants.MIN_NATURAL_FOOD_SIZE + 
-                     Math.floor(Math.random() * (Constants.MAX_NATURAL_FOOD_SIZE - Constants.MIN_NATURAL_FOOD_SIZE));
+        const color = Math.floor(Math.random() * Config.FOOD_COLORS);
+        const size = Config.MIN_NATURAL_FOOD_SIZE + 
+                     Math.floor(Math.random() * (Config.MAX_NATURAL_FOOD_SIZE - Config.MIN_NATURAL_FOOD_SIZE));
                      
         return new Food(x, y, color, size);
     }
@@ -146,24 +128,33 @@ class FoodSpawner {
         let newY = y + Math.sin(angle) * offset;
         
         const clamped = this.clamp(newX, newY);
-        const color = Math.floor(Math.random() * Constants.FOOD_COLORS);
+        const color = Math.floor(Math.random() * Config.FOOD_COLORS);
         
         return new Food(clamped.x, clamped.y, color, size);
     }
     
     spawnDeathFood(snake) {
         const foods = [];
+        
+       
         const maxFoodCount = snake.sct * 2;
         
+       
         const sc = Math.min(6, 1 + (snake.sct - 2) / 106);
         
-        const minSize = Constants.MIN_DEATH_FOOD_SIZE;
+       
+       
+       
+        const minSize = Config.MIN_DEATH_FOOD_SIZE;
         const maxSize = minSize + Math.floor(sc * 9);
         
+       
         const positions = [];
         
+       
         positions.push({ x: snake.x, y: snake.y, isHead: true });
         
+       
         for (let i = 0; i < snake.parts.length; i++) {
             positions.push({ 
                 x: snake.parts[i].x, 
@@ -173,8 +164,11 @@ class FoodSpawner {
             });
         }
         
+       
+       
         const foodCount = Math.min(maxFoodCount, positions.length * 2);
         
+       
         const totalLength = positions.length;
         const spacing = Math.max(1, totalLength / foodCount);
         
@@ -184,12 +178,16 @@ class FoodSpawner {
         while (foodsPlaced < foodCount && posIndex < positions.length) {
             const pos = positions[Math.floor(posIndex)];
             
+           
+           
             const progress = pos.isHead ? 0 : (pos.progress || 0);
             const sizeRange = maxSize - minSize;
             const size = Math.floor(maxSize - sizeRange * progress * 0.6);
             
+           
             const clampedPos = this.clamp(pos.x, pos.y);
             
+           
             const offsetAngle = Math.random() * Math.PI * 2;
             const offsetDist = Math.random() * 5;
             const finalX = clampedPos.x + Math.cos(offsetAngle) * offsetDist;
@@ -198,12 +196,14 @@ class FoodSpawner {
             foods.push(new Food(
                 finalX,
                 finalY,
-                Math.floor(Math.random() * Constants.FOOD_COLORS),
+                Math.floor(Math.random() * Config.FOOD_COLORS),
                 size
             ));
             foodsPlaced++;
             
+           
             if (foodsPlaced < foodCount && !pos.isHead && sc > 1.5) {
+               
                 const prevIdx = Math.max(0, Math.floor(posIndex) - 1);
                 const nextIdx = Math.min(positions.length - 1, Math.floor(posIndex) + 1);
                 
@@ -212,19 +212,22 @@ class FoodSpawner {
                     const dy = positions[nextIdx].y - positions[prevIdx].y;
                     const perpAngle = Math.atan2(dy, dx) + Math.PI / 2;
                     
+                   
                     const bodyWidth = 10 * sc;
                     
+                   
                     const side = Math.random() > 0.5 ? 1 : -1;
                     const sideX = pos.x + Math.cos(perpAngle) * bodyWidth * side * 0.5;
                     const sideY = pos.y + Math.sin(perpAngle) * bodyWidth * side * 0.5;
                     const sideClamped = this.clamp(sideX, sideY);
                     
+                   
                     const sideSize = Math.floor(size * 0.85);
                     
                     foods.push(new Food(
                         sideClamped.x,
                         sideClamped.y,
-                        Math.floor(Math.random() * Constants.FOOD_COLORS),
+                        Math.floor(Math.random() * Config.FOOD_COLORS),
                         Math.max(minSize, sideSize)
                     ));
                     foodsPlaced++;
@@ -250,10 +253,9 @@ class FoodSpawner {
     
     spawnPrey(id) {
         const pos = this.getRandomPosition();
-        const color = Math.floor(Math.random() * Constants.FOOD_COLORS);
+        const color = Math.floor(Math.random() * Config.FOOD_COLORS);
         const size = 10 + Math.floor(Math.random() * 20);
         return new Prey(id, pos.x, pos.y, color, size);
     }
 }
-
 module.exports = { Food, Prey, FoodSpawner };

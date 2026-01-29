@@ -11,14 +11,15 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * LICENSE file for more details.
  */
-
 const WebSocket = require('ws');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const Constants = require('./constants');
+const Config = require('./config');
 const Game = require('./game');
 const Player = require('./player');
 const { PacketBuilder } = require('./packet');
-
 class SlitherServer {
     constructor(port = 8080) {
         this.port = port;
@@ -36,12 +37,52 @@ class SlitherServer {
         
        
         this.httpServer = http.createServer((req, res) => {
-            if (req.url === '/slither' || req.url === '/') {
+            if (req.url === '/slither') {
                 res.writeHead(200, { 'Content-Type': 'text/plain' });
-                res.end('Slither.io Server Running - Protocol v11');
+                res.end('Slither.io Server Running - Multi-Protocol Support (v11-v14)');
             } else {
-                res.writeHead(404);
-                res.end();
+               
+                let filePath = '.' + req.url;
+                if (filePath === './') {
+                    filePath = './index.html';
+                }
+                
+                const extname = path.extname(filePath);
+                let contentType = 'text/html';
+                switch (extname) {
+                    case '.js':
+                        contentType = 'text/javascript';
+                        break;
+                    case '.css':
+                        contentType = 'text/css';
+                        break;
+                    case '.json':
+                        contentType = 'application/json';
+                        break;
+                    case '.png':
+                        contentType = 'image/png';
+                        break;
+                    case '.jpg':
+                        contentType = 'image/jpg';
+                        break;
+                }
+                
+                fs.readFile(filePath, (error, content) => {
+                    if (error) {
+                        if(error.code == 'ENOENT'){
+                            res.writeHead(404);
+                            res.end('File not found');
+                        }
+                        else {
+                            res.writeHead(500);
+                            res.end('Sorry, check with the site admin for error: '+error.code+' ..\n');
+                        }
+                    }
+                    else {
+                        res.writeHead(200, { 'Content-Type': contentType });
+                        res.end(content, 'utf-8');
+                    }
+                });
             }
         });
         
@@ -193,13 +234,13 @@ class SlitherServer {
             for (const player of this.players.values()) {
                 player.update();
             }
-        }, Constants.TICK_RATE);
+        }, Config.TICK_RATE);
         
         setInterval(() => {
             this.processSnakeUpdates();
         }, 8);
         
-        console.log(`Game loop started (${Constants.TICK_RATE}ms ticks)`);
+        console.log(`Game loop started (${Config.TICK_RATE}ms ticks)`);
     }
     
     processSnakeUpdates() {
@@ -222,8 +263,12 @@ class SlitherServer {
             
             snake.update(deltaTime);
             
-            const sp = snake.getCurrentSpeed();
-            let moveInterval = (Constants.MOVE_DISTANCE * 32) / Math.max(0.001, sp);
+           
+           
+            const spRaw = snake.getCurrentSpeed();
+            const sp = (Number.isFinite(spRaw) && spRaw > 0) ? spRaw : 0.001;
+            let moveInterval = (Config.MOVE_DISTANCE * 32) / sp;
+            if (!Number.isFinite(moveInterval)) moveInterval = 240;
             moveInterval = Math.max(30, Math.min(500, moveInterval));
             
             const timeSinceMove = now - snake.lastMoveTime;
@@ -234,24 +279,14 @@ class SlitherServer {
                 const prevFam = snake.fam;
                 const shouldGrow = snake.hasPendingGrowth();
                 
-                snake.move();
+               
+               
+                snake.move(shouldGrow);
                 snake.lastMoveTime = now;
-                
-                if (shouldGrow && snake.parts.length > 0) {
-                    const tail = snake.parts[snake.parts.length - 1];
-                    const prev = snake.parts.length > 1 ? snake.parts[snake.parts.length - 2] : { x: snake.x, y: snake.y };
-                    const ang = Math.atan2(tail.y - prev.y, tail.x - prev.x);
-                    snake.parts.push({
-                        x: tail.x + Math.cos(ang) * Constants.MOVE_DISTANCE,
-                        y: tail.y + Math.sin(ang) * Constants.MOVE_DISTANCE,
-                        dying: false,
-                        sp: 0
-                    });
-                }
                 
                 if (snake.droppedFood) {
                     const { Food } = require('./food');
-                    const worldSize = Constants.GAME_RADIUS * 2;
+                    const worldSize = Config.GAME_RADIUS * 2;
                     const x = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.x));
                     const y = Math.max(50, Math.min(worldSize - 50, snake.droppedFood.y));
                     
@@ -317,24 +352,23 @@ class SlitherServer {
         this.httpServer.listen(this.port, '0.0.0.0', () => {
             console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║           Slither.io Server - Protocol v11                ║
+║           Slither.io Server - Multi-Protocol              ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Server running on port ${String(this.port).padEnd(5)}                          ║
 ║  WebSocket path: /slither                                 ║
 ║                                                           ║
-║  World size: ${Constants.GAME_RADIUS * 2} x ${Constants.GAME_RADIUS * 2}                         ║
-║  Play area radius: ${Constants.PLAY_RADIUS}                            ║
-║  Sector size: ${Constants.SECTOR_SIZE}                                   ║
-║  Max snake parts: ${Constants.MAX_SNAKE_PARTS}                               ║
+║  World size: ${Config.GAME_RADIUS * 2} x ${Config.GAME_RADIUS * 2}                         ║
+║  Play area radius: ${Config.PLAY_RADIUS}                            ║
+║  Sector size: ${Config.SECTOR_SIZE}                                   ║
+║  Max snake parts: ${Config.MAX_SNAKE_PARTS}                               ║
 ║                                                           ║
 ║  Initial food: ${String(this.game.foods.size).padEnd(4)}                               ║
 ║  Initial prey: ${String(this.game.preys.size).padEnd(2)}                                 ║
 ║                                                           ║
 ║  Bot settings:                                            ║
-║    Min players: ${Constants.MIN_PLAYERS}                                    ║
-║    Max bots: ${Constants.MAX_BOTS}                                       ║
+║    Min players: ${Config.MIN_PLAYERS}                                    ║
+║    Max bots: ${Config.MAX_BOTS}                                       ║
 ╚═══════════════════════════════════════════════════════════╝
-
 Connect with: ws://localhost:${this.port}/slither
             `);
         });
@@ -353,21 +387,17 @@ Connect with: ws://localhost:${this.port}/slither
     }
 }
 
-
 const PORT = parseInt(process.env.PORT) || 8080;
 const server = new SlitherServer(PORT);
 server.start();
-
 
 process.on('SIGINT', () => {
     console.log('\nShutting down...');
     server.stop();
     process.exit(0);
 });
-
 process.on('SIGTERM', () => {
     server.stop();
     process.exit(0);
 });
-
 module.exports = SlitherServer;

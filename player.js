@@ -1,20 +1,6 @@
-/*
- * Copyright (C) 2026 xbact
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * LICENSE file for more details.
- */
-
 const Constants = require('./constants');
+const Config = require('./config');
 const { PacketBuilder, PacketReader } = require('./packet');
-
 
 const STATE = {
     CONNECTED: 0,
@@ -22,7 +8,6 @@ const STATE = {
     WAITING_SECRET: 2,
     PLAYING: 3
 };
-
 class Player {
     constructor(ws, game) {
         this.ws = ws;
@@ -35,6 +20,7 @@ class Player {
         this.name = '';
         this.skin = 0;
         this.customSkin = null;
+        this.protocolVersion = Config.DEFAULT_PROTOCOL_VERSION;
         
        
        
@@ -110,19 +96,42 @@ class Player {
         }
         
        
-        switch (firstByte) {
+        let packetType = firstByte;
+        let reader = null;
+        if (firstByte === 255) {
+            if (data.length === 1) {
+                this.disconnect();
+                return;
+            }
+           
+            if (data.length >= 2) {
+                packetType = data[1];
+               
+                reader = new PacketReader(data.slice(2)); 
+            }
+        }
+        switch (packetType) {
             case Constants.CLIENT_PACKET.PING:
                 this.handlePing();
                 break;
                 
+            case 118:
+                if (reader) {
+                    const msgBytes = reader.readBytes(reader.remaining);
+                    const msg = msgBytes.toString('utf8');
+                    console.log(`Victory message from ${this.name}: ${msg}`);
+                    this.game.setVictoryMessage(this.name, this.lastScore || 0, msg);
+                } else if (data.length > 1) {
+                    
+                     const msg = data.slice(1).toString('utf8');
+                     console.log(`Victory message from ${this.name}: ${msg}`);
+                     this.game.setVictoryMessage(this.name, this.lastScore || 0, msg);
+                }
+                break;
             case Constants.CLIENT_PACKET.TURN:
                 if (this.snake && data.length >= 2) {
                     const turnValue = data[1];
-                    if (turnValue < 128) {
-                        this.snake.angle -= 0.05 * (128 - turnValue) / 128;
-                    } else {
-                        this.snake.angle += 0.05 * (turnValue - 128) / 128;
-                    }
+                    this.snake.applyTurnPacket(turnValue);
                 }
                 break;
                 
@@ -143,7 +152,11 @@ class Player {
                 break;
                 
             default:
+               
                 if (firstByte <= 250 && this.snake) {
+                   
+                   
+                   
                     this.snake.setWantedAngle(firstByte, true);
                 }
                 break;
@@ -204,9 +217,20 @@ class Player {
         if (data.length < 26) return;
         
         const reader = new PacketReader(data);
-        reader.readUInt8(); 
-        reader.readUInt8(); 
-        reader.readUInt16();
+        reader.readUInt8();
+        reader.readUInt8();
+        const clientVersion = reader.readUInt16();
+        
+       
+        if (clientVersion >= 333) {
+            this.protocolVersion = 14;
+        } else if (clientVersion >= 291) {
+            this.protocolVersion = 11;
+        } else {
+            this.protocolVersion = Config.DEFAULT_PROTOCOL_VERSION;
+        }
+        
+        console.log(`Client version: ${clientVersion}, using Protocol: ${this.protocolVersion}`);
         reader.skip(20);    
         
         this.skin = reader.readUInt8(); 
@@ -240,10 +264,13 @@ class Player {
     
     spawn() {
         try {
-            this.snake = this.game.spawnSnake(this.name, this.skin, this.customSkin);
+           
+            this.team = Config.GAME_MODE === 2 ? (Math.random() < 0.5 ? 1 : 2) : 0;
+            
+            this.snake = this.game.spawnSnake(this.name, this.skin, this.customSkin, this.team);
             this.game.players.set(this.ws, this);
             
-            console.log(`Snake spawned: id=${this.snake.id} at (${this.snake.x.toFixed(0)}, ${this.snake.y.toFixed(0)}) with ${this.snake.parts.length} parts`);
+            console.log(`Snake spawned: id=${this.snake.id} at (${this.snake.x.toFixed(0)}, ${this.snake.y.toFixed(0)}) with ${this.snake.parts.length} parts, team=${this.team}`);
             
            
             console.log('Sending initial setup (a)...');
@@ -285,20 +312,25 @@ class Player {
     }
     
     sendInitialSetup() {
-        const builder = this.createPacket(Constants.PACKET.INITIAL_SETUP, 32);
+        const builder = this.createPacket(Constants.PACKET.INITIAL_SETUP, 40);
         
-        builder.writeUInt24(Constants.GAME_RADIUS);
-        builder.writeUInt16(Constants.MAX_SNAKE_PARTS);
-        builder.writeUInt16(Constants.SECTOR_SIZE);
-        builder.writeUInt16(Constants.SECTOR_COUNT);
-        builder.writeUInt8(Constants.SPANGDV);
-        builder.writeUInt16(Constants.NSP1);
-        builder.writeUInt16(Constants.NSP2);
-        builder.writeUInt16(Constants.NSP3);
-        builder.writeUInt16(Constants.MAMU);
-        builder.writeUInt16(Constants.MANU2);
-        builder.writeUInt16(Constants.CST);
-        builder.writeUInt8(Constants.PROTOCOL_VERSION);
+        builder.writeUInt24(Config.GAME_RADIUS);
+        builder.writeUInt16(Config.MAX_SNAKE_PARTS);
+        builder.writeUInt16(Config.SECTOR_SIZE);
+        builder.writeUInt16(Config.SECTOR_COUNT);
+        builder.writeUInt8(Config.SPANGDV);
+        builder.writeUInt16(Config.NSP1);
+        builder.writeUInt16(Config.NSP2);
+        builder.writeUInt16(Config.NSP3);
+        builder.writeUInt16(Config.MAMU);
+        builder.writeUInt16(Config.MANU2);
+        builder.writeUInt16(Config.CST);
+        builder.writeUInt8(this.protocolVersion);
+        builder.writeUInt8(Config.DEFAULT_MSL);
+        builder.writeUInt16(Config.SERVER_ID);
+        builder.writeUInt24(Math.floor(Config.GAME_RADIUS * 0.98));
+        builder.writeUInt8(Config.GAME_MODE);
+        builder.writeUInt8(this.team || 0);
         
         this.send(builder.build());
     }
@@ -449,6 +481,9 @@ class Player {
         const newX = Math.floor(snake.x) & 0xFFFF;
         const newY = Math.floor(snake.y) & 0xFFFF;
         
+       
+       
+       
         const cmd = 0x67;
         const dataSize = isOwnSnake ? 4 : 6;
         const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize); 
@@ -474,6 +509,10 @@ class Player {
         const newX = Math.floor(snake.x) & 0xFFFF;
         const newY = Math.floor(snake.y) & 0xFFFF;
         const famValue = Math.floor(snake.fam * 16777215) & 0xFFFFFF;
+        
+       
+       
+       
         const cmd = 0x6E;
         const dataSize = isOwnSnake ? 7 : 9;
         const { buf, offset: startOffset } = this.createRawPacket(cmd, dataSize); 
@@ -500,36 +539,35 @@ class Player {
    
     sendSnakeRotation(snake) {
         if (!snake) return;
-
+       
         const toAngByte = (rad) => {
             const twoPi = Math.PI * 2;
             let v = Math.floor((rad % twoPi + twoPi) % twoPi * 256 / twoPi) & 0xFF;
             return v;
         };
-
+       
         const twoPi = Math.PI * 2;
         let diff = (snake.wantedAngle - snake.angle) % twoPi;
         if (diff < -Math.PI) diff += twoPi;
         else if (diff > Math.PI) diff -= twoPi;
-
         const ang256 = toAngByte(snake.angle);
         const wang256 = toAngByte(snake.wantedAngle);
-
-        const sp = (typeof snake.getCurrentSpeed === 'function') ? snake.getCurrentSpeed() : (snake.speed ?? snake.getBaseSpeed?.() ?? (Constants.NSP1 / 100));
+       
+        const sp = (typeof snake.getCurrentSpeed === 'function') ? snake.getCurrentSpeed() : (snake.speed ?? snake.getBaseSpeed?.() ?? (Config.NSP1 / 100));
         let speed18 = Math.round(sp * 18);
         if (speed18 < 0) speed18 = 0;
         if (speed18 > 255) speed18 = 255;
-
+       
+       
+       
         const cmd = (diff < 0) ? 0x65 /* 'e' */ : 0x34 /* '4' */;
         const { buf, offset: startOffset } = this.createRawPacket(cmd, 5);
         let offset = startOffset;
-
         buf.writeUInt16BE(snake.id, offset);
         offset += 2;
         buf[offset++] = ang256;
         buf[offset++] = wang256;
         buf[offset++] = speed18;
-
         this.send(buf);
     }
     
@@ -620,8 +658,8 @@ class Player {
     sendActiveSectors() {
         if (!this.snake) return;
         
-        const sectorX = Math.floor(this.snake.x / Constants.SECTOR_SIZE);
-        const sectorY = Math.floor(this.snake.y / Constants.SECTOR_SIZE);
+        const sectorX = Math.floor(this.snake.x / Config.SECTOR_SIZE);
+        const sectorY = Math.floor(this.snake.y / Config.SECTOR_SIZE);
         
         const range = 5;
         for (let dy = -range; dy <= range; dy++) {
@@ -629,7 +667,7 @@ class Player {
                 const sx = sectorX + dx;
                 const sy = sectorY + dy;
                 
-                if (sx < 0 || sy < 0 || sx >= Constants.SECTOR_COUNT || sy >= Constants.SECTOR_COUNT) {
+                if (sx < 0 || sy < 0 || sx >= Config.SECTOR_COUNT || sy >= Config.SECTOR_COUNT) {
                     continue;
                 }
                 
@@ -674,25 +712,48 @@ class Player {
         this.send(builder.build());
     }
     
+    sendTeamScores(team1Score, team2Score) {
+        const builder = this.createPacket(Constants.PACKET.TEAM_SCORES, 9);
+        builder.writeUInt32(team1Score);
+        builder.writeUInt32(team2Score);
+        this.send(builder.build());
+    }
+    
     sendHighscore() {
+       
+        let sct = 0;
+        let fam = 0;
+        let name = '';
+        let msg = '';
+        
         const leaders = this.game.getLeaderboard(1);
         const topSnake = leaders[0];
-        
-        if (!topSnake) return;
+        if (this.game.longestPlayerScore > 0 && (this.game.longestPlayerScore >= (topSnake ? topSnake.sct : 0))) {
+             sct = this.game.longestPlayerScore;
+             name = this.game.longestPlayerName;
+             msg = this.game.longestPlayerMessage;
+        } else if (topSnake) {
+             sct = topSnake.sct;
+             fam = topSnake.fam;
+             name = topSnake.name;
+        } else {
+             return;
+        }
         
         const builder = this.createPacket(Constants.PACKET.HIGHSCORE, 128);
         
-        builder.writeUInt24(topSnake.sct);
-        builder.writeUInt24(Math.floor(topSnake.fam * 16777215) & 0xFFFFFF);
+        builder.writeUInt24(sct);
+        builder.writeUInt24(Math.floor(fam * 16777215) & 0xFFFFFF);
         
-        const nameBytes = Buffer.from(topSnake.name || '', 'utf8');
+        const nameBytes = Buffer.from(name || '', 'utf8');
         builder.writeUInt8(nameBytes.length);
         if (nameBytes.length > 0) {
             builder.writeBytes(nameBytes);
         }
         
-       
-        builder.writeUInt8(0);
+        if (msg && msg.length > 0) {
+            builder.writeString(msg);
+        }
         
         this.send(builder.build());
     }
@@ -709,7 +770,7 @@ class Player {
         const builder = this.createPacket(Constants.PACKET.MINIMAP, 512);
         
         const mapSize = 80;
-        const worldSize = Constants.GAME_RADIUS * 2;
+        const worldSize = Config.GAME_RADIUS * 2;
         const cellSize = worldSize / mapSize;
         
         const bitmap = new Array(mapSize * mapSize).fill(false);
@@ -746,12 +807,11 @@ class Player {
                 let bits = 0;
                 let count = 0;
                 while (count < 7 && i < bitmap.length) {
-                    bits = (bits << 1) | (bitmap[i] ? 1 : 0);
+                   
+                   
+                   
+                    if (bitmap[i]) bits |= (1 << count);
                     i++;
-                    count++;
-                }
-                while (count < 7) {
-                    bits = bits << 1;
                     count++;
                 }
                 builder.writeUInt8(bits & 0x7F);
@@ -834,5 +894,4 @@ class Player {
         }
     }
 }
-
 module.exports = Player;

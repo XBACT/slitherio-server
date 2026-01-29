@@ -1,18 +1,5 @@
-/*
- * Copyright (C) 2026 xbact
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * LICENSE file for more details.
- */
-
 const Constants = require('./constants');
+const Config = require('./config');
 const Snake = require('./snake');
 const { Food, Prey, FoodSpawner } = require('./food');
 
@@ -20,15 +7,11 @@ function setSnakeWantedAngleRad(snake, angleRad) {
     const TWO_PI = Math.PI * 2;
     let a = angleRad;
     a = ((a % TWO_PI) + TWO_PI) % TWO_PI;
-
     const ANGLE_MAX = 16777215;
     const RAD_TO_ANGLE = ANGLE_MAX / TWO_PI;
-
     snake.wantedAngle = a;
     snake.wang = a * RAD_TO_ANGLE;
 }
-
-
 
 class Bot {
     constructor(snake, game) {
@@ -89,14 +72,14 @@ class Bot {
         }
         
        
-        const centerX = Constants.GAME_RADIUS;
-        const centerY = Constants.GAME_RADIUS;
+        const centerX = Config.GAME_RADIUS;
+        const centerY = Config.GAME_RADIUS;
         const distFromCenter = Math.sqrt(
             Math.pow(this.snake.x - centerX, 2) +
             Math.pow(this.snake.y - centerY, 2)
         );
         
-        if (distFromCenter > Constants.PLAY_RADIUS * 0.80) {
+        if (distFromCenter > Config.PLAY_RADIUS * 0.80) {
             const toCenter = Math.atan2(centerY - this.snake.y, centerX - this.snake.x);
             setSnakeWantedAngleRad(this.snake, toCenter);
             return;
@@ -153,7 +136,6 @@ class Bot {
         }
     }
 }
-
 class Game {
     constructor() {
         this.snakes = new Map();      
@@ -165,18 +147,33 @@ class Game {
         this.nextSnakeId = 1;
         this.nextPreyId = 1;
         
-        this.foodSpawner = new FoodSpawner(Constants.GAME_RADIUS, Constants.PLAY_RADIUS);
+        this.foodSpawner = new FoodSpawner(Config.GAME_RADIUS, Config.PLAY_RADIUS);
         
         this.lastTick = Date.now();
         this.tickCount = 0;
+        
+        this.longestPlayerName = "";
+        this.longestPlayerScore = 0;
+        this.longestPlayerMessage = "";
         
        
         this.initializeWorld();
     }
     
+    setVictoryMessage(name, score, message) {
+        if (score >= this.longestPlayerScore) {
+            this.longestPlayerName = name;
+            this.longestPlayerScore = score;
+            this.longestPlayerMessage = message;
+            console.log(`New victory message from ${name} (score ${score}): ${message}`);
+            return true;
+        }
+        return false;
+    }
+    
     initializeWorld() {
        
-        for (let i = 0; i < Constants.INITIAL_FOOD_COUNT; i++) {
+        for (let i = 0; i < Config.INITIAL_FOOD_COUNT; i++) {
             const food = this.foodSpawner.spawnNaturalFood();
             this.foods.set(food.id, food);
         }
@@ -220,8 +217,8 @@ class Game {
         this.checkBoundaryCollisions();
         
        
-        const foodInterval = Constants.FOOD_SPAWN_INTERVAL || 3;
-        if (this.tickCount % foodInterval === 0 && this.foods.size < Constants.MAX_FOOD_COUNT) {
+        const foodInterval = Config.FOOD_SPAWN_INTERVAL || 3;
+        if (this.tickCount % foodInterval === 0 && this.foods.size < Config.MAX_FOOD_COUNT) {
             for (let i = 0; i < 3; i++) {
                 const food = this.foodSpawner.spawnNaturalFood();
                 this.foods.set(food.id, food);
@@ -230,13 +227,14 @@ class Game {
         }
         
        
-        if (Math.random() < Constants.PREY_SPAWN_CHANCE && this.preys.size < Constants.MAX_PREY_COUNT) {
+        if (Math.random() < Config.PREY_SPAWN_CHANCE && this.preys.size < Config.MAX_PREY_COUNT) {
             this.spawnPrey();
         }
         
        
         if (this.tickCount % 10 === 0) {
             this.broadcastLeaderboard();
+            this.broadcastTeamScores();
         }
         
        
@@ -266,8 +264,8 @@ class Game {
         const currentBots = this.bots.size;
         
        
-        const neededTotal = Constants.MIN_PLAYERS;
-        const botTarget = Math.min(Constants.MAX_BOTS, Math.max(0, neededTotal - realPlayers));
+        const neededTotal = Config.MIN_PLAYERS;
+        const botTarget = Math.min(Config.MAX_BOTS, Math.max(0, neededTotal - realPlayers));
         
         if (currentBots < botTarget) {
            
@@ -288,13 +286,14 @@ class Game {
     }
     
     spawnBot() {
-        const name = Constants.BOT_NAMES[Math.floor(Math.random() * Constants.BOT_NAMES.length)];
+        const name = Config.BOT_NAMES[Math.floor(Math.random() * Config.BOT_NAMES.length)];
         const skin = Math.floor(Math.random() * 39);
-        const snake = this.spawnSnake(name, skin, null);
+        const team = Config.GAME_MODE === 2 ? (Math.random() < 0.5 ? 1 : 2) : 0;
+        const snake = this.spawnSnake(name, skin, null, team);
         const bot = new Bot(snake, this);
         this.bots.set(snake.id, bot);
         
-        console.log(`Bot spawned: id=${snake.id} name="${name}"`);
+        console.log(`Bot spawned: id=${snake.id} name="${name}" team=${team}`);
         
         for (const [ws, player] of this.players) {
             if (!player.snake) continue;
@@ -318,10 +317,10 @@ class Game {
         }
     }
     
-    spawnSnake(name, skin, customSkin) {
+    spawnSnake(name, skin, customSkin, team = 0) {
         const id = this.nextSnakeId++;
         const pos = this.foodSpawner.getRandomPosition();
-        const snake = new Snake(id, name, skin, pos.x, pos.y);
+        const snake = new Snake(id, name, skin, pos.x, pos.y, team);
         snake.customSkin = customSkin;
         this.snakes.set(id, snake);
         return snake;
@@ -338,6 +337,11 @@ class Game {
         const snake = this.snakes.get(snakeId);
         if (!snake) return;
         
+        const player = this.getPlayerBySnakeId(snakeId);
+        if (player) {
+            player.lastScore = snake.sct;
+            player.lastFam = snake.fam;
+        }
         this.bots.delete(snakeId);
         
         if (dropFood && snake.sct > 2) {
@@ -346,8 +350,8 @@ class Game {
             console.log(`Spawning ${foods.length} death foods for snake ${snakeId}`);
             
             for (const food of foods) {
-                if (food.x >= 0 && food.x <= Constants.GAME_RADIUS * 2 &&
-                    food.y >= 0 && food.y <= Constants.GAME_RADIUS * 2) {
+                if (food.x >= 0 && food.x <= Config.GAME_RADIUS * 2 &&
+                    food.y >= 0 && food.y <= Config.GAME_RADIUS * 2) {
                     this.foods.set(food.id, food);
                    
                     this.broadcastFoodSpawn(food, 'b');
@@ -401,33 +405,93 @@ class Game {
     }
     
     checkSnakeCollisions() {
-        const deadSnakes = [];
-        
-        for (const snake of this.snakes.values()) {
-           
-            if (deadSnakes.find(d => d.victim.id === snake.id)) continue;
-            
-            for (const otherSnake of this.snakes.values()) {
-                if (snake.id === otherSnake.id) continue;
-                
+       
+       
+        const snakes = Array.from(this.snakes.values());
+        const deathBy = new Map();
+        const killCredit = new Map();
+        const sameTeamNoKill = (a, b) =>
+            (Config.GAME_MODE === 2 && a.team !== 0 && a.team === b.team);
+        for (let i = 0; i < snakes.length; i++) {
+            const a = snakes[i];
+            for (let j = i + 1; j < snakes.length; j++) {
+                const b = snakes[j];
+                if (sameTeamNoKill(a, b)) continue;
                
-                if (snake.collidesWithSnake(otherSnake)) {
-                    deadSnakes.push({ victim: snake, killer: otherSnake });
-                    break;
+                const aDead = deathBy.has(a.id);
+                const bDead = deathBy.has(b.id);
+                if (aDead && bDead) continue;
+               
+                const aHitsB = !aDead && a.collidesWithSnake(b);
+                const bHitsA = !bDead && b.collidesWithSnake(a);
+                if (!aHitsB && !bHitsA) continue;
+               
+                if (aHitsB && !bHitsA) {
+                    if (!deathBy.has(a.id)) {
+                        deathBy.set(a.id, b.id);
+                        killCredit.set(b.id, (killCredit.get(b.id) || 0) + 1);
+                    }
+                    continue;
+                }
+                if (bHitsA && !aHitsB) {
+                    if (!deathBy.has(b.id)) {
+                        deathBy.set(b.id, a.id);
+                        killCredit.set(a.id, (killCredit.get(a.id) || 0) + 1);
+                    }
+                    continue;
+                }
+               
+               
+                const dx = a.x - b.x;
+                const dy = a.y - b.y;
+                const ra = a.getHeadRadius();
+                const rb = b.getHeadRadius();
+                const headDistSq = dx * dx + dy * dy;
+                const headCollide = headDistSq <= (ra + rb) * (ra + rb);
+                if (headCollide) {
+                   
+                    if (a.sct > b.sct) {
+                        if (!deathBy.has(b.id)) {
+                            deathBy.set(b.id, a.id);
+                            killCredit.set(a.id, (killCredit.get(a.id) || 0) + 1);
+                        }
+                    } else if (b.sct > a.sct) {
+                        if (!deathBy.has(a.id)) {
+                            deathBy.set(a.id, b.id);
+                            killCredit.set(b.id, (killCredit.get(b.id) || 0) + 1);
+                        }
+                    } else {
+                       
+                        if (!deathBy.has(a.id)) deathBy.set(a.id, 0);
+                        if (!deathBy.has(b.id)) deathBy.set(b.id, 0);
+                    }
+                } else {
+                   
+                    if (!deathBy.has(a.id)) deathBy.set(a.id, 0);
+                    if (!deathBy.has(b.id)) deathBy.set(b.id, 0);
                 }
             }
         }
-        
-        for (const { victim, killer } of deadSnakes) {
-            killer.kills++;
-            console.log(`Snake ${victim.id} killed by ${killer.id}`);
-            this.removeSnake(victim.id, true);
-            
-           
-            const player = this.getPlayerBySnakeId(killer.id);
-            if (player && !this.bots.has(killer.id)) {
-                this.sendKillNotification(player, killer.kills);
+       
+        for (const [killerId, add] of killCredit.entries()) {
+            const killer = this.snakes.get(killerId);
+            if (!killer) continue;
+            killer.kills += add;
+        }
+        for (const [victimId, killerId] of deathBy.entries()) {
+            const victim = this.snakes.get(victimId);
+            if (!victim) continue;
+            if (killerId && killerId !== 0) {
+                console.log(`Snake ${victimId} killed by ${killerId}`);
+                const killer = this.snakes.get(killerId);
+                const player = killer ? this.getPlayerBySnakeId(killerId) : null;
+                if (killer && player && !this.bots.has(killerId)) {
+                    this.sendKillNotification(player, killer.kills);
+                }
+            } else {
+                console.log(`Snake ${victimId} died (no killer)`);
             }
+            this.removeSnake(victimId, true);
         }
     }
     
@@ -521,7 +585,29 @@ class Game {
     }
     
     broadcastLeaderboard() {
-       
+        for (const [ws, player] of this.players) {
+            if (player.authenticated) {
+                player.sendLeaderboard();
+            }
+        }
+    }
+    
+    broadcastTeamScores() {
+        if (Config.GAME_MODE !== 2) return;
+        
+        let team1Score = 0;
+        let team2Score = 0;
+        
+        for (const snake of this.snakes.values()) {
+            if (snake.team === 1) team1Score += snake.getScore();
+            else if (snake.team === 2) team2Score += snake.getScore();
+        }
+        
+        for (const [ws, player] of this.players) {
+            if (player.authenticated) {
+                player.sendTeamScores(team1Score, team2Score);
+            }
+        }
     }
     
     broadcastMinimap() {
@@ -532,5 +618,4 @@ class Game {
        
     }
 }
-
 module.exports = Game;

@@ -1,42 +1,35 @@
-/*
- * Copyright (C) 2026 xbact
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * LICENSE file for more details.
- */
-
 const Constants = require('./constants');
+const Config = require('./config');
 const ANGLE_MAX = 16777215;
 const ANGLE_TO_RAD = (Math.PI * 2) / ANGLE_MAX;
 const RAD_TO_ANGLE = ANGLE_MAX / (Math.PI * 2);
 const HALF_ANGLE_MAX = ANGLE_MAX / 2;
-
 function wrapAngleUnits(a) {
-    // Keep in [0, ANGLE_MAX)
     a = a % ANGLE_MAX;
     if (a < 0) a += ANGLE_MAX;
     return a;
 }
-
 function shortestDiffUnits(target, current) {
     let diff = target - current;
     if (diff > HALF_ANGLE_MAX) diff -= ANGLE_MAX;
     else if (diff < -HALF_ANGLE_MAX) diff += ANGLE_MAX;
     return diff;
 }
-
+function distSqPointToSegment(px, py, x1, y1, x2, y2) {
+    const l2 = (x1 - x2) ** 2 + (y1 - y2) ** 2;
+    if (l2 === 0) return (px - x1) ** 2 + (py - y1) ** 2;
+    let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const x = x1 + t * (x2 - x1);
+    const y = y1 + t * (y2 - y1);
+    return (px - x) ** 2 + (py - y) ** 2;
+}
 class Snake {
-    constructor(id, name, skin, x, y) {
+    constructor(id, name, skin, x, y, team = 0) {
         this.id = id;
         this.name = name || '';
         this.skin = skin || 0;
+        this.team = team;
         this.customSkin = null;
         
        
@@ -44,19 +37,25 @@ class Snake {
         this.y = y;
         this.angle = Math.random() * Math.PI * 2;
         this.wantedAngle = this.angle;
-
-        this.ehang = this.angle * RAD_TO_ANGLE;
-        this.wang = this.ehang;
-        this.speed = Constants.NSP1 / 100;         
+       
+        this.ehang = this.angle * RAD_TO_ANGLE; 
+        this.wang = this.ehang;                 
+        this.speed = Config.NSP1 / 100;         
         this.boosting = false;
         
        
         this.parts = [];
-        this.sct = 10; 
-        this.fam = 0.5;
+       
+       
+       
+        this.sct = Math.max(2, Config.INITIAL_SNAKE_PARTS || 2);
+        this.fam = 0;
+       
+       
+        this.pendingGrowth = 0;
         
        
-        this.score = Constants.INITIAL_SCORE;
+        this.score = Config.INITIAL_SCORE;
         this.kills = 0;
         
        
@@ -92,50 +91,82 @@ class Snake {
         }
     }
     
+   
+   
+   
+    getVisibleSct() {
+        const pg = Number.isFinite(this.pendingGrowth) ? this.pendingGrowth : 0;
+        return Math.max(2, this.sct - pg);
+    }
     getScale() {
-        return Math.min(6, 1 + (this.sct - 2) / 106);
+        const sctVisible = this.getVisibleSct();
+        const sc = 1 + (sctVisible - 2) / 106;
+        if (!Number.isFinite(sc)) return 1;
+        return Math.min(6, Math.max(0.1, sc));
     }
     
     getScang() {
-        const sc = this.getScale();
-        return 0.28 + 0.72 * Math.pow((7 - sc) / 6, 1.5);
+    const sc = this.getScale();
+   
+   
+    return 0.13 + 0.87 * Math.pow((7 - sc) / 6, 2);
     }
     
     getSpang() {
-        const spangdv = Constants.SPANGDV / 10; 
-        const spang = this.speed / spangdv;
-        return Math.min(1, spang);
+    const spangdv = Config.SPANGDV / 10;
+   
+    const spang = this.getCurrentSpeed() / spangdv;
+    return Math.min(1, spang);
+    }
+   
+   
+   
+   
+    applyTurnPacket(turnValue) {
+        if (!Number.isFinite(turnValue)) return;
+        if (turnValue === 0) return;
+        const dir = (turnValue < 128) ? -1 : 1;
+        const v = (turnValue < 128) ? turnValue : (turnValue - 128);
+        if (v <= 0) return;
+        const mamu = Config.MAMU / 1000;
+        const scang = this.getScang();
+        const spang = this.getSpang();
+        const deltaRad = dir * mamu * v * scang * spang;
+        const deltaUnits = deltaRad * RAD_TO_ANGLE;
+        this.ehang = wrapAngleUnits(this.ehang + deltaUnits);
+        this.wang = this.ehang;
+       
+        this.angle = this.ehang * ANGLE_TO_RAD;
+        this.wantedAngle = this.wang * ANGLE_TO_RAD;
     }
     
     getBaseSpeed() {
         const sc = this.getScale();
-        const nsp1 = Constants.NSP1 / 100; 
-        const nsp2 = Constants.NSP2 / 100; 
+        const nsp1 = Config.NSP1 / 100; 
+        const nsp2 = Config.NSP2 / 100; 
         return nsp1 + nsp2 * sc;
     }
     
     getBoostSpeed() {
-        return Constants.NSP3 / 100; 
+        return Config.NSP3 / 100; 
     }
     
     getCurrentSpeed() {
         return this.boosting ? this.getBoostSpeed() : this.getBaseSpeed();
     }
-
     update(deltaTime, isPlayerControlled = false) {
-        const mamu = Constants.MAMU / 1000;
+       
+        const mamu = Config.MAMU / 1000;
         const scang = this.getScang();
         const spang = this.getSpang();
-
+       
         const vfr = deltaTime / 8;
-
+       
         const maxTurnRad = mamu * vfr * scang * spang;
         const maxTurnUnits = maxTurnRad * RAD_TO_ANGLE;
-
         const diffUnits = shortestDiffUnits(this.wang, this.ehang);
-
+       
         const deadzoneUnits = 0.0001 * RAD_TO_ANGLE;
-
         if (Math.abs(diffUnits) > deadzoneUnits) {
             if (Math.abs(diffUnits) <= maxTurnUnits) {
                 this.ehang = wrapAngleUnits(this.wang);
@@ -143,22 +174,22 @@ class Snake {
                 this.ehang = wrapAngleUnits(this.ehang + Math.sign(diffUnits) * maxTurnUnits);
             }
         }
-
+       
         this.angle = this.ehang * ANGLE_TO_RAD;
         this.wantedAngle = this.wang * ANGLE_TO_RAD;
-
         this.speed = this.boosting ? this.getBoostSpeed() : this.getBaseSpeed();
     }
-
-    move() {
-        const moveDistance = Constants.MOVE_DISTANCE; 
+   
+   
+    move(grow = false) {
+        const moveDistance = Config.MOVE_DISTANCE; 
         
         const newX = this.x + Math.cos(this.angle) * moveDistance;
         const newY = this.y + Math.sin(this.angle) * moveDistance;
         
        
        
-        this.updateBodyParts();
+        this.updateBodyParts(grow);
         
        
         this.x = newX;
@@ -191,22 +222,30 @@ class Snake {
     
    
    
-    updateBodyParts() {
+    updateBodyParts(grow = false) {
         if (this.parts.length === 0) return;
-        
        
        
-        for (let i = this.parts.length - 1; i > 0; i--) {
+       
+        if (grow) {
+            const tail = this.parts[this.parts.length - 1];
+            this.parts.push({ x: tail.x, y: tail.y, dying: false, sp: 0 });
+        }
+       
+       
+        const lastIndex = this.parts.length - 1;
+        const startIndex = grow ? lastIndex - 1 : lastIndex;
+        for (let i = startIndex; i > 0; i--) {
             this.parts[i].x = this.parts[i - 1].x;
             this.parts[i].y = this.parts[i - 1].y;
         }
-        
        
         this.parts[0].x = this.x;
         this.parts[0].y = this.y;
     }
     
     setWantedAngle(angleByte, isOwnSnake = false) {
+       
         this.wang = (angleByte / 251) * ANGLE_MAX;
         this.wantedAngle = this.wang * ANGLE_TO_RAD;
     }
@@ -225,7 +264,7 @@ class Snake {
         this.fam += famIncrease;
         
        
-        while (this.fam >= 1.0 && this.sct < Constants.MAX_SNAKE_PARTS) {
+        while (this.fam >= 1.0 && this.sct < Config.MAX_SNAKE_PARTS) {
             this.fam -= 1.0;
             this.sct++;
             
@@ -238,7 +277,7 @@ class Snake {
        
         this.fam += amount * 0.01; 
         
-        while (this.fam >= 1.0 && this.sct < Constants.MAX_SNAKE_PARTS) {
+        while (this.fam >= 1.0 && this.sct < Config.MAX_SNAKE_PARTS) {
             this.fam -= 1.0;
             this.sct++;
             this.pendingGrowth = (this.pendingGrowth || 0) + 1;
@@ -247,8 +286,9 @@ class Snake {
     
    
     getScore() {
-        const fpsls = Snake.getFpsls(this.sct);
-        const fmlts = Snake.getFmlts(this.sct);
+        const sctVisible = this.getVisibleSct();
+        const fpsls = Snake.getFpsls(sctVisible);
+        const fmlts = Snake.getFmlts(sctVisible);
         return Math.floor(15 * (fpsls + this.fam / fmlts - 1) - 5);
     }
     
@@ -261,7 +301,7 @@ class Snake {
     }
     
     static getFmlts(sct) {
-        const mscps = Constants.MAX_SNAKE_PARTS; 
+        const mscps = Config.MAX_SNAKE_PARTS; 
         if (sct >= mscps) return Snake.getFmlts(mscps - 1);
         return Math.pow(1 - sct / mscps, 2.25);
     }
@@ -278,32 +318,39 @@ class Snake {
     
     getHeadRadius() {
        
-        return 14.5 * this.getScale();
+        return 15.0 * this.getScale();
     }
     
     getBodyRadius() {
-        return 14.5 * this.getScale();
+        return 15.0 * this.getScale();
     }
     
     isPointOnBody(x, y, headRadius = 0, excludeHead = false) {
-       
         const bodyRadius = this.getBodyRadius();
         const collisionDist = headRadius + bodyRadius;
         const collisionDistSq = collisionDist * collisionDist;
-        
        
+       
+       
+       
+        const points = [{ x: this.x, y: this.y }, ...this.parts];
+        if (points.length < 2) return false;
         const partsCount = this.parts.length;
-        
-       
-       
-        const startIdx = excludeHead ? Math.min(10, Math.floor(partsCount * 0.3)) : 0;
-        
-        for (let i = startIdx; i < partsCount; i++) {
-            const part = this.parts[i];
-            const dx = x - part.x;
-            const dy = y - part.y;
-            
-            if (dx * dx + dy * dy < collisionDistSq) {
+        const startIdxRaw = excludeHead ? Math.max(1, Math.min(10, Math.floor(partsCount * 0.3))) : 0;
+        const startIdx = Math.min(startIdxRaw, points.length - 2);
+        for (let i = startIdx; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+           
+            const minX = Math.min(p1.x, p2.x) - collisionDist;
+            const maxX = Math.max(p1.x, p2.x) + collisionDist;
+            const minY = Math.min(p1.y, p2.y) - collisionDist;
+            const maxY = Math.max(p1.y, p2.y) + collisionDist;
+            if (x < minX || x > maxX || y < minY || y > maxY) {
+                continue;
+            }
+            const distSq = distSqPointToSegment(x, y, p1.x, p1.y, p2.x, p2.y);
+            if (distSq <= collisionDistSq) {
                 return true;
             }
         }
@@ -312,25 +359,48 @@ class Snake {
     
     collidesWithSnake(otherSnake) {
         if (otherSnake.id === this.id) return false;
-        
        
-        const myHeadRadius = this.getHeadRadius() * 0.8; 
-        
-        return otherSnake.isPointOnBody(this.x, this.y, myHeadRadius, false);
+        const myHeadRadius = this.getHeadRadius();
+       
+        if (otherSnake.isPointOnBody(this.x, this.y, myHeadRadius, false)) return true;
+       
+        const maxRecentSegments = Math.min(8, this.parts.length);
+        const recentHistory = this.parts.slice(0, maxRecentSegments);
+        for (const p of recentHistory) {
+            if (otherSnake.isPointOnBody(p.x, p.y, myHeadRadius, false)) return true;
+        }
+       
+       
+       
+       
+       
+        const historyPoints = [{ x: this.x, y: this.y }, ...recentHistory];
+       
+        const ts = [0.2, 0.4, 0.6, 0.8];
+        for (let i = 0; i < historyPoints.length - 1; i++) {
+            const a = historyPoints[i];
+            const b = historyPoints[i + 1];
+            for (const t of ts) {
+                const sx = a.x + (b.x - a.x) * t;
+                const sy = a.y + (b.y - a.y) * t;
+                if (otherSnake.isPointOnBody(sx, sy, myHeadRadius, false)) return true;
+            }
+        }
+        return false;
     }
     
     hitBoundary() {
-        const center = Constants.GAME_RADIUS;
+        const center = Config.GAME_RADIUS;
         const dx = this.x - center;
         const dy = this.y - center;
         const distSq = dx * dx + dy * dy;
-        return distSq >= Constants.PLAY_RADIUS * Constants.PLAY_RADIUS;
+        return distSq >= Config.PLAY_RADIUS * Config.PLAY_RADIUS;
     }
     
     getDistanceFromCenter() {
         return Math.sqrt(
-            Math.pow(this.x - Constants.GAME_RADIUS, 2) + 
-            Math.pow(this.y - Constants.GAME_RADIUS, 2)
+            Math.pow(this.x - Config.GAME_RADIUS, 2) + 
+            Math.pow(this.y - Config.GAME_RADIUS, 2)
         );
     }
     
