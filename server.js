@@ -351,24 +351,17 @@ class SlitherServer {
     start() {
         this.httpServer.listen(this.port, '0.0.0.0', () => {
             console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║           Slither.io Server - Multi-Protocol              ║
-╠═══════════════════════════════════════════════════════════╣
-║  Server running on port ${String(this.port).padEnd(5)}                          ║
-║  WebSocket path: /slither                                 ║
-║                                                           ║
-║  World size: ${Config.GAME_RADIUS * 2} x ${Config.GAME_RADIUS * 2}                         ║
-║  Play area radius: ${Config.PLAY_RADIUS}                            ║
-║  Sector size: ${Config.SECTOR_SIZE}                                   ║
-║  Max snake parts: ${Config.MAX_SNAKE_PARTS}                               ║
-║                                                           ║
-║  Initial food: ${String(this.game.foods.size).padEnd(4)}                               ║
-║  Initial prey: ${String(this.game.preys.size).padEnd(2)}                                 ║
-║                                                           ║
-║  Bot settings:                                            ║
-║    Min players: ${Config.MIN_PLAYERS}                                    ║
-║    Max bots: ${Config.MAX_BOTS}                                       ║
-╚═══════════════════════════════════════════════════════════╝
+Server running on port ${String(this.port).padEnd(5)}
+WebSocket path: /slither
+World size: ${Config.GAME_RADIUS * 2} x ${Config.GAME_RADIUS * 2}
+Play area radius: ${Config.PLAY_RADIUS}
+Sector size: ${Config.SECTOR_SIZE}
+Max snake parts: ${Config.MAX_SNAKE_PARTS}
+Initial food: ${String(this.game.foods.size).padEnd(4)}
+Initial prey: ${String(this.game.preys.size).padEnd(2)}
+Bot settings:
+Min players: ${Config.MIN_PLAYERS}
+Max bots: ${Config.MAX_BOTS}
 Connect with: ws://localhost:${this.port}/slither
             `);
         });
